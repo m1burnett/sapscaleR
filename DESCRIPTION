@@ -14,7 +14,8 @@ Maintainer: Michael W. Burnett <mburnett@ucsb.edu>
 Description: Models for up-scaling sap flux density measurements to whole-tree
     volumetric sap flow rates using classic circular tree trunk theory or the
     new theory proposed by Burnett et al. (2026) in AgForMet for irregularly
-    shaped tree trunks. For questions, contact mburnett@ucsb.edu or
+    shaped tree trunks (https://doi.org/10.1016/j.agrformet.2026.111357).
+    For questions, contact mburnett@ucsb.edu or
     mikeburnett@ucdavis.edu.
 License: MIT + file LICENSE
 URL: https://github.com/m1burnett/sapscaleR
