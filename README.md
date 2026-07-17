@@ -3,10 +3,8 @@
 `sapscaleR` provides models for up-scaling sap flux density measurements to
 whole-tree volumetric sap flow rates using classic circular trunk theory and
 the irregular-trunk theory proposed by Burnett et al. (2026) in *Agricultural
-and Forest Meteorology*.
+and Forest Meteorology* (<https://doi.org/10.1016/j.agrformet.2026.111357>).
 
-The package is currently prepared for release after the associated manuscript is
-published.
 
 ## Installation
 
