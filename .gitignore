@@ -1,0 +1,13 @@
+.Rhistory
+.RData
+.RDataTmp
+.Rproj.user/
+*.Rcheck/
+..Rcheck/
+*.tar.gz
+Meta/
+doc/
+/_tmp_*.docx
+/*.docx
+/dryad-files/
+/examples/

@@ -1,0 +1,13 @@
+^\.github$
+^\.RDataTmp$
+^\.Rhistory$
+^\.\.Rcheck$
+^\.gitignore$
+^_pkgdown\.yml$
+^docs$
+^LICENSE\.md$
+^pisonia-trunks-manuscript-v4\.docx$
+^_tmp_.*\.docx$
+^dryad-files$
+^examples$
+^README\.Rmd$

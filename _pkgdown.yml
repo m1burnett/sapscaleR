@@ -1,0 +1,25 @@
+url: https://m1burnett.github.io/sapscaleR/
+template:
+  bootstrap: 5
+navbar:
+  structure:
+    left: [intro, reference, articles]
+    right: [github]
+reference:
+  - title: Trunks and profiles
+    contents:
+      - make_trunk
+      - make_beta_curve
+      - make_beta_profile
+      - make_custom_profile
+      - fit_sapflux_beta_profile
+  - title: Sap flow estimators
+    contents:
+      - SF_circ
+      - SF_steiner
+      - SF_corr
+  - title: Model helpers
+    contents:
+      - predict_rsteiner
+      - predict_rin
+      - hrel_from_hmax

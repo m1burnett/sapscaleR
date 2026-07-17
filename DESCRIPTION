@@ -1,0 +1,33 @@
+Package: sapscaleR
+Title: sapscaleR
+Version: 0.0.0.9000
+Authors@R:
+    person(
+        given = c("Michael", "W."),
+        family = "Burnett",
+        role = c("aut", "cre"),
+        email = "mburnett@ucsb.edu",
+        comment = c(ORCID = "0000-0001-5126-5568")
+    )
+Author: Michael W. Burnett [aut, cre] (<https://orcid.org/0000-0001-5126-5568>)
+Maintainer: Michael W. Burnett <mburnett@ucsb.edu>
+Description: Models for up-scaling sap flux density measurements to whole-tree
+    volumetric sap flow rates using classic circular tree trunk theory or the
+    new theory proposed by Burnett et al. (2026) in AgForMet for irregularly
+    shaped tree trunks. For questions, contact mburnett@ucsb.edu or
+    mikeburnett@ucdavis.edu.
+License: MIT + file LICENSE
+URL: https://github.com/m1burnett/sapscaleR
+BugReports: https://github.com/m1burnett/sapscaleR/issues
+DOI: 10.1016/j.agrformet.2026.111357
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Suggests:
+    ggplot2,
+    knitr,
+    nlme,
+    rmarkdown,
+    testthat (>= 3.0.0)
+VignetteBuilder: knitr
+Config/testthat/edition: 3

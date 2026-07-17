@@ -1,0 +1,617 @@
+---
+title: "sapscaleR examples"
+author: "Michael W. Burnett"
+date: "2026-05-19"
+output: html_document
+vignette: >
+  %\VignetteIndexEntry{sapscaleR examples}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = TRUE)
+if (requireNamespace("sapscaleR", quietly = TRUE)) {
+  library(sapscaleR)
+} else {
+  source(file.path("..", "R", "sapscaleR.R"))
+}
+```
+
+
+The `sapscaleR` package implements the sap flow models proposed by Burnett et al. (2026) in Agricultural and Forest Meteorology (https://doi.org/10.1016/j.agrformet.2026.111357), which relax the standard assumption of a tree's trunk being perfectly circular. It is intended to help users up-scale their sap flux density measurements to trunks based on diameter, perimeter, and concavity measurements. It is NOT intended to execute the spatial erosions used in the paper as reference sap flow values. Equation numbers referenced in this Markdown file refer to the equations in the AgForMet paper.
+
+If you use `sapscaleR` in any published research, please cite the Burnett et al. (2026) paper. For questions, please email mburnett@ucsb.edu or mikeburnett@ucdavis.edu.
+
+
+## Estimating Whole-Trunk Sap Flow Without Assuming Circularity
+
+`sapscaleR` provides three whole-trunk sap flow estimators:
+
+- `SF_circ()` assumes the trunk cross-section behaves like a circle (Eqs. 1, 5).
+- `SF_steiner()` applies the shallow-depth Steiner correction based on perimeter convexity (Eqs. 2, 6).
+- `SF_corr()` uses the Steiner correction near the cambium, then tapers inward using two radii: `r_steiner`, the depth of the first shallow topological change, and `r_in`, the relative inscribed circle radius (Eqs. 3, 9).
+
+### Data inputs
+
+All three functions need a radial sap flux profile and a trunk object, which is created using this package's `make_trunk()` function. The trunk object must contain diameter (`diameter`) or circular-equivalent radius (`radius`), plus perimeter convexity (`convexity`), which is the trunk's convex hull perimeter (or DBH*pi) divided by its true perimeter.
+
+The radial sap flux profile can be a beta curve from `make_beta_curve()` or any function wrapped by `make_custom_profile()` (see section "Bringing Your Own Profile"). When running the SF models, you specify whether the sap flux profile should be applied according to relative depth from cambium (`r`), absolute depth from cambium (`d`), or relative depth from cambium to heartwood (`z`) (see section "Other Profile Scales").
+
+If the sap flux profile is scaled from cambium to heartwood (`z`), the SF estimator will need maximum sapwood depth (`dsw`) data when called. `SF_corr()` requires two additional parameters not used by the other SF models, `r_steiner` and `r_in`. One can use the default `r_steiner` and `r_in` regression models derived from the *Pisonia grandis* trunks in the paper, or a user can pass their own `r_steiner` and `r_in` values when calling `SF_corr()`.
+
+The paper uses a beta distribution of sap flux density on `z`, where `z = 0` at the cambium and `z = 1` at the deepest active sapwood depth. We provide a function, `make_beta_curve()`, that accepts `mu` and `K` parameters and creates a curve on the 0-to-1 interval (the location of 0 and 1 in the trunk is chosen later with `eval_mode` when you call an SF model).
+
+```{r paper-profile}
+pigr_curve <- make_beta_curve(
+  mu = 0.348,
+  K = 3.66
+)
+```
+
+We will use `pisonia-data.csv` in the following examples. The file includes perimeter, DBH, convexity, maximum sapwood depths, and diameter-normalized deepest concavity depths (`h_rel`).
+
+```{r read-pisonia-data}
+pisonia_path <- system.file("extdata", "pisonia-data.csv", package = "sapscaleR")
+if (!nzchar(pisonia_path)) {
+  pisonia_path <- file.path("..", "inst", "extdata", "pisonia-data.csv")
+}
+pisonia_data <- read.csv(pisonia_path)
+```
+
+### Modeling sap flow in one trunk
+
+The lowest-convexity trunk in `pisonia-data.csv` is tree `80`. We can pull the trunk values directly from the file and then run all three estimators.
+
+```{r single-tree}
+tree_80 <- pisonia_data[which.min(pisonia_data$convexity), ]
+
+trunk_80 <- make_trunk(
+  convexity = tree_80$convexity,
+  diameter = tree_80$DBH_cm
+)
+
+single_tree_estimates <- c(
+  SF_circ = SF_circ(
+    pigr_curve, trunk_80,
+    eval_mode = "z",
+    dsw = tree_80$predicted_swd_cm
+  ),
+  SF_steiner = SF_steiner(
+    pigr_curve, trunk_80,
+    eval_mode = "z",
+    dsw = tree_80$predicted_swd_cm
+  ),
+  SF_corr = SF_corr(
+    pigr_curve, trunk_80,
+    eval_mode = "z",
+    dsw = tree_80$predicted_swd_cm,
+    h_rel = tree_80$concave_depth_over_dbh
+  )
+)
+
+round(single_tree_estimates, 0)
+```
+
+You should get approximately `5203` for `SF_circ`, `7936` for `SF_steiner`, and `7430` for `SF_corr`, respectively.
+
+If you do not have deepest concavity depth data and leave `h_rel` blank, then `SF_corr()` falls back to the convexity-only `r_in` model (Eq. S3.1). You can also adjust `n`, the radial grid point density with which the sap flux profile is integrated, to make computation faster and less precise or slower and more precise (the default is 2,001 points):
+
+```{r single-tree-no-hrel}
+SF_corr(
+  pigr_curve, trunk_80,
+  eval_mode = "z",
+  dsw = tree_80$predicted_swd_cm,
+  n = 20001
+)
+```
+
+For tree `80`, the convexity-only fallback should give approximately `7457.6` and will warn that it is using Eq. S3.1.
+
+By default, `SF_corr()` predicts `r_steiner` and `r_in` from trunk shape data using the paper's *Pisonia grandis* relationships. If you have measured or otherwise modeled these relative depths for your own trunk shape(s), you can also pass them directly for each trunk:
+
+```{r user-radii}
+SF_corr(
+  pigr_curve, trunk_80,
+  eval_mode = "z",
+  dsw = tree_80$predicted_swd_cm,
+  r_steiner = 0.088,
+  r_in = 0.409
+)
+```
+
+With these user-specified radii for tree `80`, you should get approximately `7317`.
+
+### Other profile scales
+
+In the previous section, we ran the three SF models using beta distributions to model sap flux density between the cambium and the depth of the sapwood:heartwood transition, which we independently measured/modeled as a function of DBH. The sap flux profiles are functions of `z`.
+
+The same three SF models can also use sap flux profiles defined on the entire relative radius (<code>r = 0</code> at the cambium and <code>r = 1</code> at a depth equal to DBH/2) or on absolute depth (`d`, the depth as measured from the cambium inward). The difference is easiest to see by drawing the same beta shape across small, medium, and large trunks:
+
+```{r profile-scale-schematic, fig.width=9, fig.height=7}
+plot_profile_row <- function(row_label, depth_max_fun, radius_cm, sapwood_depth_cm) {
+  x <- seq(0, 1, length.out = 300)
+  y <- dbeta(x, shape1 = 0.348 * 3.66, shape2 = (1 - 0.348) * 3.66)
+  y <- y / max(y)
+  
+  for (i in seq_along(radius_cm)) {
+    depth_max <- depth_max_fun(radius_cm[i], sapwood_depth_cm[i])
+    depth_cm <- x * depth_max
+    
+    plot(
+      NA,
+      xlim = c(0, max(radius_cm)),
+      ylim = c(0, 1.35),
+      axes = FALSE,
+      xlab = "",
+      ylab = "",
+      main = if (row_label == "r") c("Skinny", "Medium", "Large")[i] else ""
+    )
+    rect(0, 0, radius_cm[i], 1, col = "gray95", border = "gray45")
+    text(
+      radius_cm[i],
+      1.04,
+      "trunk center",
+      srt = 90,
+      adj = c(0.5, 0.5),
+      cex = 1.05,
+      col = "gray30"
+    )
+    polygon(
+      c(depth_cm, rev(depth_cm)),
+      c(rep(0.08, length(depth_cm)), 0.08 + 0.75 * rev(y)),
+      col = adjustcolor("steelblue", alpha.f = 0.45),
+      border = "steelblue"
+    )
+    abline(v = depth_max, lty = 2, col = "gray35")
+    if (row_label %in% c("z", "d")) {
+      text(
+        depth_max,
+        1.04,
+        "sapwood limit",
+        srt = 90,
+        adj = c(0.5, 0.5),
+        cex = 1.05,
+        col = "gray30"
+      )
+    }
+    axis(1, at = pretty(c(0, max(radius_cm))), cex.axis = 0.75)
+    mtext(paste0(row_label, "-based sap flux density"), side = 2, line = 0.5, cex = 0.85)
+    if (i == 2) mtext("Depth from cambium (cm)", side = 1, line = 2.2, cex = 0.8)
+  }
+}
+
+radius_cm <- c(10, 20, 35)
+dbh_cm <- radius_cm * 2
+sapwood_depth_cm <- 12.1732 + 4.3425 * (log(dbh_cm) - 3.7858)
+
+op <- par(mfrow = c(3, 3), mar = c(3, 3, 2, 1), oma = c(0, 0, 2, 0))
+plot_profile_row("r", function(radius, dsw) radius, radius_cm, sapwood_depth_cm)
+plot_profile_row("z", function(radius, dsw) dsw, radius_cm, sapwood_depth_cm)
+plot_profile_row("d", function(radius, dsw) 5, radius_cm, sapwood_depth_cm)
+mtext("How profile depth scales change across trunk sizes", outer = TRUE, cex = 1.1)
+par(op)
+```
+- The `r`-based sap flux profiles will stretch across the entire radius of a tree (note that radius is defined as DBH/2 and may not really "exist" in the actual tree).
+- The `z`-based profiles do stretch radially, but non-linearly with the tree's radius; the exact behavior will depend on how the sapwood:heartwood transition depth varies with tree size. In this case they are positively correlated, but the sapwood width tapers off at large tree sizes.
+- The `d`-based profiles stay the same width, in terms of absolute units.
+
+
+### Relative-radius profiles (r)
+
+An `r` profile is useful when sap flux density scales with the whole trunk radius. A peak at <code>r = 0.2</code> is always 20% of the way from the cambium to the center, so the same profile occupies more centimeters in a larger trunk. Because `r` is already relative to trunk radius, these calls do not need `dsw`.
+
+```{r r-profiles}
+r_curve <- make_beta_curve(
+  mu = 0.348,
+  K = 3.66
+)
+
+r_based_estimates <- c(
+  SF_circ = SF_circ(r_curve, trunk_80, eval_mode = "r"),
+  SF_steiner = SF_steiner(r_curve, trunk_80, eval_mode = "r"),
+  SF_corr = SF_corr(
+    r_curve, trunk_80,
+    eval_mode = "r",
+    h_rel = tree_80$concave_depth_over_dbh
+  )
+)
+
+round(r_based_estimates, 0)
+```
+
+You should get approximately `13114` for `SF_circ`, `22623` for `SF_steiner`, and `12225` for `SF_corr`.
+
+### Absolute-depth profiles (d)
+
+A `d` profile is useful when sap flux density is expected to stay fixed in depth from the cambium, rather than stretching with trunk size. In this example, the sap flux profile is the same beta curve as above but is always 7 units deep (note the argument `active depth` must be provided when using <code>eval_mode = "d"</code> and should use the same units as the rest of the trunk geometry variables). That means a small trunk and a large trunk receive the same absolute-depth profile near the cambium.
+
+```{r d-profiles}
+d_curve <- make_beta_curve(
+  mu = 0.348,
+  K = 3.66
+)
+
+d_based_estimates <- c(
+  SF_circ = SF_circ(d_curve, trunk_80, eval_mode = "d", active_depth = 7),
+  SF_steiner = SF_steiner(d_curve, trunk_80, eval_mode = "d", active_depth = 7),
+  SF_corr = SF_corr(
+    d_curve, trunk_80,
+    eval_mode = "d",
+    active_depth = 7,
+    h_rel = tree_80$concave_depth_over_dbh
+  )
+)
+
+round(d_based_estimates, 0)
+```
+
+You should get approximately `2379` for `SF_circ`, `3554` for `SF_steiner`, and `3547` for `SF_corr`.
+
+## Estimating SF in Multiple Trunks Simultaneously
+
+The minimum columns needed to run `SF_corr()` with the default paper-derived `r_in` and `r_steiner` models are:
+
+- `tree_id`
+- `convexity`
+- `diameter` (or `radius`)
+- `dsw` (maximum sapwood depth in same units as `diameter`)
+
+If you also have deepest concavity depth data (`h_rel`), pass it to `SF_corr()` to use the preferred convexity-plus-`h_rel` model for `r_in`.
+
+```{r bulk-sfcorr}
+pisonia_data$SF_corr <- mapply(function(convexity, diameter, sapwood_depth, h_rel) {
+  trunk <- make_trunk(convexity = convexity, diameter = diameter)
+  SF_corr(
+    pigr_curve, trunk,
+    eval_mode = "z",
+    dsw = sapwood_depth,
+    h_rel = h_rel
+  )
+},
+convexity = pisonia_data$convexity,
+diameter = pisonia_data$DBH_cm,
+sapwood_depth = pisonia_data$predicted_swd_cm,
+h_rel = pisonia_data$concave_depth_over_dbh)
+
+round(head(pisonia_data[, c("tree_id", "convexity", "predicted_swd_cm", "SF_corr")]), 0)
+```
+
+The first six `SF_corr` estimates should be approximately `1385`, `2400`, `2323`, `2492`, `7596`, and `7430`.
+
+## Choosing A Sap Flux Profile
+
+As outlined above, the sap flow models can use sap flux profiles on three depth scales:
+
+- `r`: relative radial depth, where <code>r = 0</code> at the cambium and <code>r = 1</code> at the center of the trunk's assumed circle.
+- `d`: absolute depth, where `d = 0` at the cambium and `d` is measured inward in cm.
+- `z`: relative depth to heartwood, where `z = 0` at the cambium and `z = 1` at deepest active sapwood depth, `dsw`.
+
+Profiles can be in real sap flux density units, or they can be normalized distributions that integrate to 1 over the trunk's radius. SF estimates based on normalized sap flux density profiles must be scaled later to translate them into real units of sap flow.
+
+**There are many possible approaches to fitting, scaling, and applying sap flux density profiles. It is up to the user to make decisions that fit their sampling scheme and end goals. Here we outline the process by which we decided to model *Pisonia grandis* with sap flux profiles fit between the cambium and heartwood (`z` scaling), and how we fit our global beta distribution of sap flux density.**
+
+In the *Pisonia* paper, we had maximum sapwood depth (which we sometimes call `dsw` or the depth of the sapwood:heartwood transition) from a subset of trees. Plotting `dsw` against DBH revealed that sapwood depth increases non-linearly with DBH, so absolute depth does not represent the same part of the active sapwood across trees. This led us to use `z`-scaling.
+
+```{r sapwood-depth-plot}
+swd_fit <- lm(measured_swd_cm ~ I(log(DBH_cm)), data = pisonia_data)
+
+plot(
+  measured_swd_cm ~ DBH_cm,
+  data = pisonia_data,
+  pch = 19,
+  col = "gray35",
+  xlab = "DBH (cm)",
+  ylab = "Measured sapwood depth, dsw (cm)"
+)
+
+dbh_grid <- seq(
+  min(pisonia_data$DBH_cm, na.rm = TRUE),
+  max(pisonia_data$DBH_cm, na.rm = TRUE),
+  length.out = 200
+)
+lines(
+  dbh_grid,
+  predict(swd_fit, newdata = data.frame(DBH_cm = dbh_grid)),
+  col = "firebrick",
+  lwd = 2
+)
+```
+
+The fitted curve in this example is a simple log-DBH sapwood-depth model. The complete `pisonia-data.csv` file also includes `predicted_swd_cm`, predicted from that fitted curve, which we used above so that every trunk has a sapwood-depth value available for the sap flow estimators.
+
+Now we can fit the sap flux profile itself from `avg.sfd.pigr.csv`, which has actual sap flux density averages from different depths of several trees. The following fit mirrors `pisonia-trunk-analysis.R`: sap flux density is scaled so each sensor's maximum is 1, each sensor depth is divided by its measured sapwood depth (`swd`) to put observations on the `z` scale, zero-flow endpoint observations are added at the sapwood-heartwood transition, and a unit-peak beta curve is fit with a tree-level nonlinear mixed model.
+
+We provide a function, `fit_sapflux_beta_profile()`, that can fit a beta distribution from this kind of sap flux density data. If `nlme` is unavailable, `fit_sapflux_beta_profile()` falls back to a fixed-effect `optim()` fit; that fallback is useful, but it will not exactly reproduce the paper's partially pooled values.
+
+```{r fit-beta}
+avg_sfd_path <- system.file("extdata", "avg.sfd.pigr.csv", package = "sapscaleR")
+if (!nzchar(avg_sfd_path)) {
+  avg_sfd_path <- file.path("..", "inst", "extdata", "avg.sfd.pigr.csv")
+}
+avg_sfd <- read.csv(avg_sfd_path)
+
+fit_z <- fit_sapflux_beta_profile(
+  avg_sfd,
+  scale = "z",
+  tree_col = "Tree.id",
+  sensor_col = "Sensor.id",
+  depth_col = "T.depth.cm",
+  flux_col = "Avg.SFD.cm.h",
+  dbh_col = "DBH.cm",
+  dsw_col = "swd"
+)
+
+round(c(u = fit_z$mu, K = fit_z$K), 3)
+fit_z$method
+```
+
+The rounded result is the paper profile, `u = 0.348` and `K = 3.66`. We plot this below.
+
+By default, `fit_sapflux_beta_profile()` follows the workflow used here: it rescales each sensor by its maximum sap flux density, fits a unit-peak beta curve to estimate the shape, and returns both `fit_z$unit_peak_profile` and `fit_z$profile`. The `fit_z$profile` object is a proper distribution, so it integrates to 1 over the fitted 0-to-1 coordinate (`z` here). If you want real sap flux units, rescale the input data or bring your own profile with `make_custom_profile()` (see below).
+
+```{r beta-plot}
+z_grid <- seq(0.001, 0.999, length.out = 400)
+plot_df <- fit_z$fit_data
+plot_df$tree <- as.character(plot_df$tree)
+tree_ids <- sort(unique(plot_df$tree))
+tree_cols <- setNames(rainbow(length(tree_ids), s = 0.95, v = 0.95), tree_ids)
+
+fixed_curve <- data.frame(
+  z = z_grid,
+  y = fit_z$profile$js_fun(z_grid)
+)
+
+tree_curves <- list()
+tree_fmax <- setNames(rep(fit_z$fmax, length(tree_ids)), tree_ids)
+
+if (inherits(fit_z$fit, "nlme")) {
+  fixed_effects <- nlme::fixef(fit_z$fit)
+  random_effects <- nlme::ranef(fit_z$fit)
+  
+  for (tree in tree_ids) {
+    lp <- unname(fixed_effects["lp"])
+    lq <- unname(fixed_effects["lq"]) + random_effects[tree, "lq"]
+    p <- exp(lp)
+    q <- exp(lq)
+    K <- p + q + 2
+    u <- (p + 1) / K
+    fmax <- beta_peak_muK(u, K)
+    tree_fmax[tree] <- fmax
+    tree_curves[[tree]] <- data.frame(
+      tree = tree,
+      z = z_grid,
+      y = .beta_unitpeak_pq(z_grid, lp, lq) * fmax
+    )
+  }
+}
+
+plot_df$y_pdf <- plot_df$y * tree_fmax[plot_df$tree]
+y_max <- max(plot_df$y_pdf, fixed_curve$y,
+             unlist(lapply(tree_curves, function(x) x$y)),
+             na.rm = TRUE)
+
+op <- par(mar = c(5, 4.5, 4, 7), xpd = NA)
+
+plot(
+  plot_df$x,
+  plot_df$y_pdf,
+  type = "n",
+  xlim = c(0, 1),
+  ylim = c(0, y_max * 1.05),
+  xlab = "Relative depth to sapwood:heartwood transition",
+  ylab = "Sapflux density (beta-pdf scale)",
+  main = sprintf("Fixed effects (pdf): u = %.3f, K = %.2f, f_max = %.3f",
+                 fit_z$mu, fit_z$K, fit_z$fmax),
+  panel.first = grid(col = "gray88")
+)
+
+for (tree in tree_ids) {
+  if (!is.null(tree_curves[[tree]])) {
+    lines(tree_curves[[tree]]$z, tree_curves[[tree]]$y,
+          col = tree_cols[tree], lwd = 1.2)
+  }
+}
+lines(fixed_curve$z, fixed_curve$y, col = "black", lwd = 3)
+points(plot_df$x, plot_df$y_pdf, pch = 16, cex = 0.55,
+       col = tree_cols[plot_df$tree])
+legend("right", inset = c(-0.18, 0), legend = tree_ids, col = tree_cols[tree_ids],
+       lty = 1, pch = 16, bty = "n", title = "tree")
+par(op)
+```
+
+To follow the paper workflow, use the beta distribution (`fit_z$profile`, or the rounded `pigr_curve` used earlier) when estimating whole-trunk sap flow. Applying the fitted curve to all 33 trunks produces the same estimates as above:
+
+```{r apply-fitted-profile}
+pisonia_data$SF_corr_fit_z <- mapply(function(convexity, diameter, sapwood_depth, h_rel) {
+  trunk <- make_trunk(convexity = convexity, diameter = diameter)
+  SF_corr(
+    fit_z$profile, trunk,
+    eval_mode = "z",
+    dsw = sapwood_depth,
+    h_rel = h_rel
+  )
+},
+convexity = pisonia_data$convexity,
+diameter = pisonia_data$DBH_cm,
+sapwood_depth = pisonia_data$predicted_swd_cm,
+h_rel = pisonia_data$concave_depth_over_dbh)
+
+round(head(pisonia_data[, c("tree_id", "SF_corr_fit_z")]), 0)
+```
+
+
+You can also fit profiles on `r` or `d` scales. The absolute-depth scale requires a finite `active_depth` in the same units as `depth_col` because beta functions live on a finite interval; in other words, how deep does your beta profile reach on all trees? If active depth changes strongly with tree size, `z` is probably the more sensible choice.
+
+```{r alternate-scales}
+fit_r <- fit_sapflux_beta_profile(
+  avg_sfd,
+  scale = "r",
+  tree_col = "Tree.id",
+  sensor_col = "Sensor.id",
+  depth_col = "T.depth.cm",
+  flux_col = "Avg.SFD.cm.h",
+  dbh_col = "DBH.cm",
+  dsw_col = "swd"
+)
+
+fit_d <- fit_sapflux_beta_profile(
+  avg_sfd,
+  scale = "d",
+  active_depth = max(avg_sfd$T.depth.cm),
+  tree_col = "Tree.id",
+  sensor_col = "Sensor.id",
+  depth_col = "T.depth.cm",
+  flux_col = "Avg.SFD.cm.h",
+  method = "optim"
+)
+
+round(rbind(
+  z = c(u = fit_z$mu, K = fit_z$K),
+  r = c(u = fit_r$mu, K = fit_r$K),
+  d = c(u = fit_d$mu, K = fit_d$K)
+), 3)
+```
+
+## Bringing Your Own Profile
+
+Users do not need to use beta functions. Any function can be wrapped with `make_custom_profile()`. This example uses a made-up absolute-depth profile in real sap flux density units. Because the profile is on `d`, the function interprets depth as the same units represented by the sap flux density data (here arbitrarily assumed to be cm).
+
+```{r custom-profile}
+custom_profile <- make_custom_profile(
+  mode = "d",
+  active_depth = 18,
+  js_fun = function(d) {
+    ifelse(d <= 18, 22 * exp(-d / 7) * (1 + 0.15 * sin(d)), 0)
+  }
+)
+
+d_grid <- seq(0, 22, length.out = 300)
+plot(
+  d_grid,
+  custom_profile$js_fun(d_grid),
+  type = "l",
+  lwd = 2,
+  xlab = "Depth from cambium, d (cm)",
+  ylab = "Sap flux density"
+)
+```
+
+Then use that profile with the same trunk functions. Here we pass independently derived `r_steiner` and `r_in` from tree `80`; if these are not supplied, `SF_corr()` uses the default *Pisonia grandis* models from the paper. Note that `r_steiner` and `r_in` always use the `r` scale, i.e. 0 at the cambium and 1 at the theoretical trunk center, even if `z` or `d` mode is being used.
+
+```{r custom-profile-sf}
+c(
+  SF_circ = SF_circ(custom_profile, trunk_80),
+  SF_steiner = SF_steiner(custom_profile, trunk_80),
+  SF_corr = SF_corr(
+    custom_profile, trunk_80,
+    r_steiner = 0.0884,
+    r_in = 0.4091
+  )
+)
+```
+
+You should get approximately `46754`, `71183`, and `65099`, respectively. These values are in the arbitrary units implied by the custom profile's sap flux density scale.
+
+## Monte Carlo Uncertainty
+
+Each SF estimator can also return Monte Carlo uncertainty by setting `uncertainty = "mc"`. In this mode, `sapscaleR` repeatedly draws uncertain inputs, recomputes sap flow for each draw, and summarizes the resulting distribution. The returned object is a list with the mean estimate, standard error, confidence interval, uncertainty sources, number of valid and invalid draws, and optionally the raw draws. If `uncertainty = "none"`, which is the default, the functions return a single numeric value as above. Use `conf` to choose the confidence level for the quantile interval; the default is `conf = 0.95`.
+
+For all three SF estimators, MC draws can include uncertainty in fitted beta-profile parameters when that information is stored in the profile object. Profiles created with `make_beta_curve()` can carry either `vcov_log` or `se_alpha`/`se_beta`; profiles returned by `fit_sapflux_beta_profile()` carry approximate beta-shape uncertainty automatically when it can be estimated from the `nlme` fit or the fixed-effect optimizer. For `z`-scaled profiles, you can also provide uncertainty in sapwood depth with `dsw_se`; the function draws positive sapwood depths around the supplied `dsw` using a normal distribution.
+
+For `SF_corr()`, MC draws can additionally include uncertainty in the paper-derived `r_steiner` and `r_in` regression models. The coefficient standard errors and beta-regression precision estimates as used in the paper are stored in `sapscale_models` in the package source. For each draw, the function draws `r_steiner` and `r_in` regression coefficients from normal distributions centered on the fitted coefficients with those stored SEs, draws the precision parameter from a positive distribution based on `phi` and `phi_se`, predicts the mean radius, and optionally draws a realized radius from the beta distribution around that mean.
+
+Draws that produce impossible corrected-model geometry, such as `r_steiner >= r_in`, are resampled a limited number of times and then counted as invalid if they still fail. The confidence interval is the requested quantile interval of the valid sap flow draws, so it reflects only the uncertainty sources you turned on or provided.
+
+If you already know the beta curve you want to use but also have uncertainty estimates for its fitted alpha and beta parameters, pass those estimates to `make_beta_curve()`. Here `se_alpha` and `se_beta` are on the beta distribution's `alpha` and `beta` parameters, not on `mu` and `K`.
+
+Here is an example of a beta curve specified by the user using `make_beta_curve()`, including uncertainty estimates for alpha and beta, used to calculate SF_circ with MC uncertainty from the sap flux profile only:
+
+```{r mc-beta-curve-uncertainty}
+uncertain_beta_curve <- make_beta_curve(
+  mu = 0.348,
+  K = 3.66,
+  se_alpha = 0.06,
+  se_beta = 0.39
+)
+
+SF_circ(
+  uncertain_beta_curve, trunk_80,
+  eval_mode = "z",
+  dsw = tree_80$predicted_swd_cm,
+  uncertainty = "mc",
+  n_draws = 500,
+  conf = 0.95,
+  seed = 4
+)[c("estimate", "ci", "uncertainty_sources")]
+```
+
+And here is an example of SF_corr calculated with MC uncertainty stemming from a beta sap flux profile fit using `fit_sapflux_beta_profile()` (which should automatically include uncertainty information in `fit_z`), sapwood depth, r_steiner, and r_in. The latter two radii are derived from the defualt *Pisonia grandis* models and their uncertainties as provided in the paper.
+
+```{r mc-example}
+mc_corr <- SF_corr(
+  fit_z$profile, trunk_80,
+  eval_mode = "z",
+  dsw = tree_80$predicted_swd_cm,
+  h_rel = tree_80$concave_depth_over_dbh,
+  uncertainty = "mc",
+  n_draws = 500,
+  conf = 0.95,
+  dsw_se = 0.5,
+  seed = 1
+)
+
+mc_corr[c("estimate", "se", "ci", "uncertainty_sources", "n_valid", "n_invalid")]
+```
+
+Custom profiles can also carry basic uncertainty. Supply either a constant `js_se` or a function `js_se_fun` that returns standard errors on the same scale as `js_fun`. During MC, `sapscaleR` draws sap flux density values from normal distributions around `js_fun(x)` and, by default, clips negative draws to zero with `draw_min = 0`.
+
+```{r mc-custom-profile-uncertainty}
+uncertain_custom_profile <- make_custom_profile(
+  mode = "d",
+  js_fun = function(d) pmax(0, 5 * exp(-d / 3)),
+  js_se_fun = function(d) 0.15 + 0.03 * d,
+  active_depth = 7
+)
+
+SF_circ(
+  uncertain_custom_profile, trunk_80,
+  eval_mode = "d",
+  active_depth = 7,
+  uncertainty = "mc",
+  n_draws = 500,
+  seed = 5
+)[c("estimate", "ci", "uncertainty_sources")]
+```
+
+If you have your own functions for `r_steiner` and `r_in`, evaluate those functions for each trunk and pass the resulting values to `SF_corr()`. In that case, `SF_corr()` does not use the default *Pisonia grandis* radius models for that call. If you also have standard errors for those predicted or measured radii, pass them as `r_steiner_se` and `r_in_se`; under `uncertainty = "mc"`, `sapscaleR` draws those user-supplied radii from normal distributions and resamples draws that violate `0 < r_steiner < r_in <= 1`.
+
+```{r custom-radius-functions}
+my_rsteiner_fun <- function(convexity) {
+  0.06 + 0.05 * (1 - convexity)
+}
+
+my_rin_fun <- function(convexity, h_rel) {
+  0.62 - 0.18 * (1 - convexity) - 0.7 * h_rel
+}
+
+my_rsteiner <- my_rsteiner_fun(trunk_80$convexity)
+my_rin <- my_rin_fun(trunk_80$convexity, tree_80$concave_depth_over_dbh)
+
+SF_corr(
+  fit_z$profile, trunk_80,
+  eval_mode = "z",
+  dsw = tree_80$predicted_swd_cm,
+  r_steiner = my_rsteiner,
+  r_in = my_rin,
+  r_steiner_se = 0.01,
+  r_in_se = 0.02,
+  uncertainty = "mc",
+  n_draws = 500,
+  conf = 0.90,
+  dsw_se = 0.5,
+  seed = 2
+)[c("estimate", "ci", "conf", "uncertainty_sources")]
+```
+
+Use `include_profile_uncertainty = FALSE` to hold the sap flux profile fixed, `include_rmodel_residual = FALSE` to use only the mean predicted `r_steiner` and `r_in` values in `SF_corr()` when using the default paper-derived models, and `keep_draws = TRUE` if you want the full simulated distribution.

@@ -1,0 +1,18 @@
+citHeader("To cite sapscaleR, please cite the associated manuscript:")
+
+citEntry(
+  entry = "Article",
+  title = "sapscaleR: up-scaling sap flux density in irregularly shaped trunks",
+  author = personList(
+    as.person("Michael W. Burnett")
+  ),
+  journal = "Agricultural and Forest Meteorology",
+  year = "2026",
+  doi = "10.1016/j.agrformet.2026.111357",
+  textVersion = paste(
+    "Burnett, M. W. (2026).",
+    "sapscaleR: up-scaling sap flux density in irregularly shaped trunks.",
+    "Agricultural and Forest Meteorology.",
+    "https://doi.org/10.1016/j.agrformet.2026.111357"
+  )
+)
