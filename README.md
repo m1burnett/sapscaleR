@@ -8,7 +8,7 @@ and Forest Meteorology* (<https://doi.org/10.1016/j.agrformet.2026.111357>).
 
 ## Installation
 
-Once the GitHub repository is public, install with:
+The package can be installed in R with:
 
 ```r
 install.packages("remotes")
